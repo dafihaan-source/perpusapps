@@ -9,5 +9,10 @@ class Member extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['nama', 'nis_nim', 'no_hp'];
+    protected $fillable = [ 
+'nama', 
+'nis_nim', 
+'no_hp', 
+'foto', // baris baru: mengizinkan kolom foto diisi 
+]; 
 }

@@ -5,6 +5,7 @@ use Illuminate\Foundation\Application;
 use Inertia\Inertia;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\BookController;
+use App\Http\Controllers\MemberController; // baris baru: memanggil MemberController 
 use App\Http\Controllers\ProfileController;
 
 /*
@@ -33,6 +34,10 @@ Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+    Route::middleware(['auth'])->group(function () { 
+Route::resource('books', BookController::class); 
+Route::resource('members', MemberController::class); // baris baru: 7 alamat CRUD untuk anggota 
+}); 
 });
 
 // Blok Rute CRUD Buku (Sesuai modul praktikum)
