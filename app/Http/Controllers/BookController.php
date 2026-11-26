@@ -24,6 +24,24 @@ class BookController extends Controller
     }
 
     /**
+     * Endpoint JSON untuk live search buku (dipanggil oleh Axios).
+     */
+    public function search(Request $request)
+    {
+        $katakunci = $request->query('q', '');
+
+        $books = Book::where(function ($query) use ($katakunci) {
+            $query->where('judul', 'like', "%{$katakunci}%")
+                  ->orWhere('pengarang', 'like', "%{$katakunci}%");
+        })
+            ->latest()
+            ->limit(10)
+            ->get(['id', 'kode_buku', 'judul', 'pengarang', 'stok']);
+
+        return response()->json($books);
+    }
+
+    /**
      * Menampilkan form untuk menambah buku baru.
      */
     public function create()

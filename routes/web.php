@@ -3,9 +3,8 @@
 use Illuminate\Support\Facades\Route;
 use Illuminate\Foundation\Application;
 use Inertia\Inertia;
-use App\Http\Controllers\HomeController;
 use App\Http\Controllers\BookController;
-use App\Http\Controllers\MemberController; // baris baru: memanggil MemberController 
+use App\Http\Controllers\MemberController;
 use App\Http\Controllers\ProfileController;
 
 /*
@@ -29,20 +28,25 @@ Route::get('/dashboard', function () {
     return Inertia::render('Dashboard');
 })->middleware(['auth', 'verified'])->name('dashboard');
 
-// Blok Rute Profil Pengguna (Mengatasi error profile.edit)
+// Blok Rute Profil Pengguna
 Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
-    Route::middleware(['auth'])->group(function () { 
-Route::resource('books', BookController::class); 
-Route::resource('members', MemberController::class); // baris baru: 7 alamat CRUD untuk anggota 
-}); 
 });
 
-// Blok Rute CRUD Buku (Sesuai modul praktikum)
+// Blok Rute Terproteksi Auth (AJAX di atas Route::resource)
 Route::middleware(['auth'])->group(function () {
+    // Route AJAX (JSON) HARUS ditulis DI ATAS Route::resource
+    Route::get('books/search', [BookController::class, 'search'])
+        ->name('books.search');
+    Route::get('members/search', [MemberController::class, 'search'])
+        ->name('members.search');
+    Route::get('members/cek-nis', [MemberController::class, 'cekNis'])
+        ->name('members.cek-nis');
+
     Route::resource('books', BookController::class);
+    Route::resource('members', MemberController::class);
 });
 
 // Memuat rute autentikasi bawaan Laravel Breeze (Login, Register, Logout, dll)

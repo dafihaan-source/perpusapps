@@ -1,115 +1,163 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { Link, router } from '@inertiajs/vue3';
+import { ref, computed, watch, onBeforeUnmount } from 'vue';
+import axios from 'axios';
 
 const props = defineProps({
     books: Object,
     search: String,
 });
 
-const keyword = ref(props.search || '');
+// Isi kotak pencarian; ?? berarti "jika kosong, pakai teks kosong" agar tidak pernah bernilai null
+const keyword = ref(props.search ?? '');
 
-function cari() {
-    router.get('/books', { search: keyword.value });
-}
+// Hasil pencarian dari server. Nilai null artinya "belum ada pencarian",
+// sehingga tabel menampilkan daftar bawaan
+const hasilCari = ref(null);
+const sedangMencari = ref(false);
+const pesanError = ref('');
 
-function hapus(id) {
-    if (confirm('Yakin ingin menghapus buku ini?')) {
-        router.delete(route('books.destroy', id));
+// timer menyimpan hitungan mundur debounce; permintaan menyimpan pembatal untuk
+// permintaan Axios yang sedang berjalan
+let timer = null;
+let permintaan = null;
+
+// Data yang ditampilkan di tabel: hasil pencarian jika ada, jika tidak daftar bawaan dari BookController@index
+const daftarBuku = computed(() => hasilCari.value ?? props.books.data);
+
+// Mengirim permintaan AJAX ke /books/search lalu menyimpan hasilnya
+async function ambilHasil() {
+    // Batalkan permintaan sebelumnya yang belum selesai agar jawaban lama tidak menimpa jawaban baru
+    if (permintaan) {
+        permintaan.abort();
+    }
+
+    permintaan = new AbortController();
+    sedangMencari.value = true;
+    pesanError.value = '';
+
+    try {
+        const respons = await axios.get(route('books.search'), {
+            params: { q: keyword.value.trim() },
+            signal: permintaan.signal,
+        });
+
+        hasilCari.value = respons.data;
+        sedangMencari.value = false;
+    } catch (error) {
+        // Permintaan yang sengaja dibatalkan bukan kesalahan; permintaan penggantinya sedang berjalan
+        if (axios.isCancel(error)) {
+            return;
+        }
+
+        sedangMencari.value = false;
+        pesanError.value = 'Pencarian gagal. Muat ulang halaman, lalu coba lagi.';
     }
 }
+
+// watch dijalankan setiap kali isi kotak pencarian berubah (setiap ketikan)
+watch(keyword, (nilai) => {
+    // Hentikan hitungan mundur lama (debounce)
+    clearTimeout(timer);
+
+    // Kotak dikosongkan: batalkan permintaan, kembali ke daftar bawaan
+    if (nilai.trim() === '') {
+        if (permintaan) {
+            permintaan.abort();
+        }
+        hasilCari.value = null;
+        sedangMencari.value = false;
+        pesanError.value = '';
+        return;
+    }
+
+    // Mulai hitungan mundur 300 milidetik; permintaan baru dikirim hanya jika pengguna berhenti mengetik
+    timer = setTimeout(ambilHasil, 300);
+});
+
+// Function hapus ditambah onSuccess agar hasil pencarian ikut diperbarui setelah menghapus
+function hapus(id) {
+    if (confirm('Yakin ingin menghapus buku ini?')) {
+        router.delete(route('books.destroy', id), {
+            onSuccess: () => {
+                if (keyword.value.trim() !== '') {
+                    ambilHasil();
+                }
+            },
+        });
+    }
+}
+
+// Saat halaman ditinggalkan, hentikan timer dan permintaan yang masih berjalan
+onBeforeUnmount(() => {
+    clearTimeout(timer);
+    if (permintaan) {
+        permintaan.abort();
+    }
+});
 </script>
 
 <template>
-    <Head title="Data Buku" />
-
     <AuthenticatedLayout>
-        <template #header>
-            <h2 class="font-semibold text-xl text-gray-800 leading-tight">Data Buku</h2>
-        </template>
+        <h1>Data Buku</h1>
 
-        <div class="py-12">
-            <div class="max-w-7xl mx-auto sm:px-6 lg:px-8 space-y-4">
-                
-                <!-- Alert Flash Message -->
-                <div 
-                    v-if="$page.props.flash?.success" 
-                    class="p-4 bg-green-100 border border-green-400 text-green-700 rounded-lg shadow-sm"
-                >
-                    {{ $page.props.flash.success }}
-                </div>
-
-                <!-- Card Container Utama -->
-                <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg p-6">
-                    
-                    <!-- Header Atas: Tombol Tambah & Input Pencarian -->
-                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-                        <Link 
-                            href="/books/create" 
-                            class="inline-flex items-center justify-center px-4 py-2 bg-indigo-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-indigo-700 focus:bg-indigo-700 active:bg-indigo-900 transition duration-150 ease-in-out w-fit"
-                        >
-                            + Tambah Buku
-                        </Link>
-
-                        <div class="w-full md:w-72">
-                            <input 
-                                v-model="keyword" 
-                                @keyup.enter="cari" 
-                                type="text" 
-                                placeholder="Cari judul atau pengarang..."
-                                class="w-full px-4 py-2 text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                            />
-                        </div>
-                    </div>
-
-                    <!-- Tabel Data Buku -->
-                    <div class="overflow-x-auto border border-gray-200 rounded-lg">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Kode</th>
-                                    <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Judul</th>
-                                    <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Pengarang</th>
-                                    <th class="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Stok</th>
-                                    <th class="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Aksi</th>
-                                </tr>
-                            </thead>
-                            <tbody class="bg-white divide-y divide-gray-200">
-                                <tr v-for="book in books.data" :key="book.id" class="hover:bg-gray-50 transition">
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ book.kode_buku }}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{{ book.judul }}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{{ book.pengarang }}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-700 font-semibold">{{ book.stok }}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-center space-x-2">
-                                        <!-- Tombol Edit -->
-                                        <Link 
-                                            :href="`/books/${book.id}/edit`" 
-                                            class="inline-flex items-center px-3 py-1 bg-amber-500 border border-transparent rounded text-xs font-medium text-white hover:bg-amber-600 transition"
-                                        >
-                                            Edit
-                                        </Link>
-
-                                        <!-- Tombol Hapus -->
-                                        <button 
-                                            @click="hapus(book.id)" 
-                                            class="inline-flex items-center px-3 py-1 bg-red-600 border border-transparent rounded text-xs font-medium text-white hover:bg-red-700 transition"
-                                        >
-                                            Hapus
-                                        </button>
-                                    </td>
-                                </tr>
-                                <tr v-if="!books.data || books.data.length === 0">
-                                    <td colspan="5" class="px-6 py-4 text-center text-sm text-gray-500">
-                                        Data buku tidak ditemukan.
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                </div>
-            </div>
+        <!-- Flash message: Menampilkan pesan sukses dari session jika ada -->
+        <div
+            v-if="$page.props.flash.success"
+            class="alert alert-success"
+            style="color: green; margin-bottom: 10px;"
+        >
+            {{ $page.props.flash.success }}
         </div>
+
+        <!-- Link menuju form tambah buku, akan diarahkan ke Books/Create.vue -->
+        <Link href="/books/create">+ Tambah Buku</Link>
+
+        <!-- Tidak ada lagi @keyup.enter: pencarian berjalan otomatis lewat watch(keyword) -->
+        <input
+            v-model="keyword"
+            type="text"
+            placeholder="Ketik judul atau pengarang..."
+        />
+
+        <!-- Penanda bahwa permintaan AJAX sedang berjalan -->
+        <span v-if="sedangMencari">Mencari...</span>
+
+        <!-- Pesan jika permintaan AJAX gagal -->
+        <p v-if="pesanError">{{ pesanError }}</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Kode</th>
+                    <th>Judul</th>
+                    <th>Pengarang</th>
+                    <th>Stok</th>
+                    <th>Aksi</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- v-for kini membaca daftarBuku (hasil pencarian atau daftar bawaan), bukan books.data -->
+                <tr v-for="book in daftarBuku" :key="book.id">
+                    <td>{{ book.kode_buku }}</td>
+                    <td>{{ book.judul }}</td>
+                    <td>{{ book.pengarang }}</td>
+                    <td>{{ book.stok }}</td>
+                    <td>
+                        <!-- Link menuju form edit buku, akan diarahkan ke Books/Edit.vue -->
+                        <Link :href="`/books/${book.id}/edit`">Edit</Link>
+
+                        <!-- Tombol hapus buku, memanggil function hapus() di atas -->
+                        <button type="button" @click="hapus(book.id)">Hapus</button>
+                    </td>
+                </tr>
+
+                <!-- Pesan jika tidak ada data yang cocok -->
+                <tr v-if="daftarBuku.length === 0">
+                    <td colspan="5">Tidak ada buku yang ditemukan.</td>
+                </tr>
+            </tbody>
+        </table>
     </AuthenticatedLayout>
 </template>

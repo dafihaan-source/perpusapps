@@ -1,100 +1,151 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { useForm } from '@inertiajs/vue3';
+import { ref, watch, onBeforeUnmount } from 'vue';
+import axios from 'axios';
 
 const form = useForm({
     nama: '',
     nis_nim: '',
     no_hp: '',
-    foto: null,
+    foto: null, // berisi berkas (File) yang dipilih, bukan teks
 });
 
+// Alamat sementara gambar di browser, hanya untuk pratinjau sebelum disimpan
 const pratinjau = ref(null);
 
+// Dipanggil saat pengguna memilih berkas pada <input type="file">
 function pilihFoto(event) {
     const berkas = event.target.files[0];
     form.foto = berkas ?? null;
     pratinjau.value = berkas ? URL.createObjectURL(berkas) : null;
 }
 
+// Validasi realtime NIS/NIM (baru pada Pertemuan 10)
+// statusNis berisi salah satu dari: '' (belum diperiksa), 'memeriksa', 'tersedia', 'terpakai', 'gagal'
+const statusNis = ref('');
+
+// timerNis = hitungan mundur debounce; permintaanNis = pembatal untuk permintaan Axios yang sedang berjalan
+let timerNis = null;
+let permintaanNis = null;
+
+// Bertanya ke server: apakah NIS/NIM yang sedang diketik sudah dipakai anggota lain?
+async function periksaNis() {
+    // Batalkan permintaan sebelumnya yang belum selesai
+    if (permintaanNis) {
+        permintaanNis.abort();
+    }
+
+    permintaanNis = new AbortController();
+    statusNis.value = 'memeriksa';
+
+    try {
+        const respons = await axios.get(route('members.cek-nis'), {
+            params: {
+                nis_nim: form.nis_nim.trim(),
+            },
+            signal: permintaanNis.signal,
+        });
+
+        // Server membalas {"tersedia": true} atau {"tersedia": false}
+        statusNis.value = respons.data.tersedia ? 'tersedia' : 'terpakai';
+    } catch (error) {
+        // Permintaan yang sengaja dibatalkan bukan kesalahan
+        if (axios.isCancel(error)) {
+            return;
+        }
+
+        statusNis.value = 'gagal';
+    }
+}
+
+// Dijalankan setiap kali isi kolom NIS/NIM berubah
+watch(() => form.nis_nim, (nilai) => {
+    clearTimeout(timerNis);
+
+    // Kolom dikosongkan: batalkan permintaan dan hapus pesan
+    if (!nilai || nilai.trim() === '') {
+        if (permintaanNis) {
+            permintaanNis.abort();
+        }
+        statusNis.value = '';
+        return;
+    }
+
+    // Tunggu 500 milidetik setelah ketikan terakhir, baru bertanya ke server
+    timerNis = setTimeout(periksaNis, 500);
+});
+
+// Saat halaman ditinggalkan, hentikan timer dan permintaan yang masih berjalan
+onBeforeUnmount(() => {
+    clearTimeout(timerNis);
+    if (permintaanNis) {
+        permintaanNis.abort();
+    }
+});
+
 function submit() {
+    // Karena form.foto berisi berkas, Inertia otomatis mengirim sebagai multipart/form-data
     form.post(route('members.store'));
 }
 </script>
 
 <template>
-    <Head title="Tambah Anggota" />
-
     <AuthenticatedLayout>
-        <template #header>
-            <h2 class="font-semibold text-xl text-gray-800 leading-tight">Tambah Anggota</h2>
-        </template>
+        <div class="p-4">
+            <h1 class="text-xl font-bold">Tambah Anggota</h1>
 
-        <div class="py-12">
-            <div class="max-w-3xl mx-auto sm:px-6 lg:px-8">
-                <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg p-6">
-                    <form @submit.prevent="submit" class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Nama</label>
-                            <input
-                                v-model="form.nama"
-                                type="text"
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            />
-                            <div v-if="form.errors.nama" class="mt-1 text-sm text-red-600">{{ form.errors.nama }}</div>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">NIS/NIM</label>
-                            <input
-                                v-model="form.nis_nim"
-                                type="text"
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            />
-                            <div v-if="form.errors.nis_nim" class="mt-1 text-sm text-red-600">{{ form.errors.nis_nim }}</div>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">No. HP</label>
-                            <input
-                                v-model="form.no_hp"
-                                type="text"
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            />
-                            <div v-if="form.errors.no_hp" class="mt-1 text-sm text-red-600">{{ form.errors.no_hp }}</div>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Foto (JPG/PNG, maksimal 2 MB)</label>
-                            <input
-                                type="file"
-                                accept="image/png, image/jpeg"
-                                @change="pilihFoto"
-                                class="mt-1 block w-full text-sm text-gray-700"
-                            />
-                            <div v-if="form.errors.foto" class="mt-1 text-sm text-red-600">{{ form.errors.foto }}</div>
-
-                            <img
-                                v-if="pratinjau"
-                                :src="pratinjau"
-                                alt="Pratinjau foto"
-                                class="mt-3 h-32 w-32 object-cover rounded border"
-                            />
-                        </div>
-
-                        <div class="pt-2">
-                            <button
-                                type="submit"
-                                :disabled="form.processing"
-                                class="inline-flex items-center px-4 py-2 bg-indigo-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50"
-                            >
-                                Simpan
-                            </button>
-                        </div>
-                    </form>
+            <form @submit.prevent="submit" class="mt-3 space-y-3">
+                <div>
+                    <label class="block">Nama</label>
+                    <input v-model="form.nama" type="text" />
+                    <div v-if="form.errors.nama" class="text-red-600">{{ form.errors.nama }}</div>
                 </div>
-            </div>
+
+                <div>
+                    <label class="block">NIS/NIM</label>
+                    <input v-model="form.nis_nim" type="text" />
+
+                    <!-- Pesan hasil pemeriksaan realtime; hanya satu yang tampil sesuai statusNis -->
+                    <div v-if="statusNis === 'memeriksa'" class="text-gray-500">
+                        Memeriksa NIS/NIM...
+                    </div>
+                    <div v-else-if="statusNis === 'tersedia'" class="text-green-700">
+                        NIS/NIM ini tersedia.
+                    </div>
+                    <div v-else-if="statusNis === 'terpakai'" class="text-red-600">
+                        NIS/NIM ini sudah terdaftar. Gunakan nomor lain.
+                    </div>
+                    <div v-else-if="statusNis === 'gagal'" class="text-yellow-700">
+                        Pemeriksaan otomatis gagal. Anda tetap dapat menyimpan; server akan memeriksa ulang.
+                    </div>
+
+                    <div v-if="form.errors.nis_nim" class="text-red-600">{{ form.errors.nis_nim }}</div>
+                </div>
+
+                <div>
+                    <label class="block">No. HP</label>
+                    <input v-model="form.no_hp" type="text" />
+                    <div v-if="form.errors.no_hp" class="text-red-600">{{ form.errors.no_hp }}</div>
+                </div>
+
+                <div>
+                    <label class="block">Foto (JPG/PNG, maksimal 2 MB)</label>
+                    <!-- Input berkas tidak bisa memakai v-model, sehingga memakai @change -->
+                    <input type="file" accept="image/png, image/jpeg" @change="pilihFoto" />
+                    <div v-if="form.errors.foto" class="text-red-600">{{ form.errors.foto }}</div>
+                    <img
+                        v-if="pratinjau"
+                        :src="pratinjau"
+                        alt="Pratinjau foto"
+                        class="mt-2 h-32 w-32 object-cover"
+                    />
+                </div>
+
+                <button type="submit" :disabled="form.processing || statusNis === 'terpakai'">
+                    Simpan
+                </button>
+            </form>
         </div>
     </AuthenticatedLayout>
 </template>

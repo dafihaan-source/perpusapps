@@ -1,128 +1,170 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head, useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { useForm } from '@inertiajs/vue3';
+import { ref, watch, onBeforeUnmount } from 'vue';
+import axios from 'axios';
 
-// 'member' diterima dari MemberController@edit, berisi data lama anggota ini
 const props = defineProps({
     member: Object,
 });
 
 const form = useForm({
-    _method: 'put', // "menyamar" sebagai PUT agar unggahan berkas terbaca PHP
-    nama: props.member.nama,
-    nis_nim: props.member.nis_nim,
-    no_hp: props.member.no_hp,
-    foto: null, // tetap null apabila pengguna tidak memilih foto baru
+    nama: props.member.nama ?? '',
+    nis_nim: props.member.nis_nim ?? '',
+    no_hp: props.member.no_hp ?? '',
+    foto: null,
 });
 
-const pratinjau = ref(null);
+// Pratinjau foto baru (jika memilih file baru) atau foto lama dari storage
+const pratinjau = ref(
+    props.member.foto ? `/storage/${props.member.foto}` : null
+);
 
 function pilihFoto(event) {
     const berkas = event.target.files[0];
     form.foto = berkas ?? null;
-    pratinjau.value = berkas ? URL.createObjectURL(berkas) : null;
+
+    if (berkas) {
+        pratinjau.value = URL.createObjectURL(berkas);
+    } else {
+        pratinjau.value = props.member.foto
+            ? `/storage/${props.member.foto}`
+            : null;
+    }
 }
 
+// Validasi realtime NIS/NIM:
+// '' (belum diperiksa), 'memeriksa', 'tersedia', 'terpakai', 'gagal'
+const statusNis = ref('');
+
+let timerNis = null;
+let permintaanNis = null;
+
+async function periksaNis() {
+    if (permintaanNis) {
+        permintaanNis.abort();
+    }
+
+    permintaanNis = new AbortController();
+    statusNis.value = 'memeriksa';
+
+    try {
+        const respons = await axios.get(route('members.cek-nis'), {
+            params: {
+                nis_nim: form.nis_nim.trim(),
+                abaikan: props.member.id,
+            },
+            signal: permintaanNis.signal,
+        });
+
+        statusNis.value = respons.data.tersedia ? 'tersedia' : 'terpakai';
+    } catch (error) {
+        if (axios.isCancel(error)) {
+            return;
+        }
+
+        statusNis.value = 'gagal';
+    }
+}
+
+watch(
+    () => form.nis_nim,
+    (nilai) => {
+        clearTimeout(timerNis);
+
+        if (!nilai || nilai.trim() === '') {
+            if (permintaanNis) {
+                permintaanNis.abort();
+            }
+            statusNis.value = '';
+            return;
+        }
+
+        timerNis = setTimeout(periksaNis, 500);
+    }
+);
+
+onBeforeUnmount(() => {
+    clearTimeout(timerNis);
+    if (permintaanNis) {
+        permintaanNis.abort();
+    }
+});
+
 function submit() {
-    // Dikirim dengan POST (bukan PUT) karena PHP tidak bisa membaca berkas dari permintaan PUT;
-    // Laravel membaca _method: 'put' lalu meneruskannya ke method update()
-    form.post(route('members.update', props.member.id));
+    // Menggunakan POST dengan _method: 'put' agar upload file/foto pada form edit bekerja lancar di Laravel
+    form.transform((data) => ({
+        ...data,
+        _method: 'put',
+    })).post(route('members.update', props.member.id));
 }
 </script>
 
 <template>
-    <Head title="Edit Anggota" />
-
     <AuthenticatedLayout>
-        <template #header>
-            <h2 class="font-semibold text-xl text-gray-800 leading-tight">Edit Anggota</h2>
-        </template>
+        <div class="p-4">
+            <h1 class="text-xl font-bold">Edit Anggota</h1>
 
-        <div class="py-12">
-            <div class="max-w-3xl mx-auto sm:px-6 lg:px-8">
-                <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg p-6">
-                    <form @submit.prevent="submit" class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Nama</label>
-                            <input
-                                v-model="form.nama"
-                                type="text"
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            />
-                            <div v-if="form.errors.nama" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.nama }}
-                            </div>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">NIS/NIM</label>
-                            <input
-                                v-model="form.nis_nim"
-                                type="text"
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            />
-                            <div v-if="form.errors.nis_nim" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.nis_nim }}
-                            </div>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">No. HP</label>
-                            <input
-                                v-model="form.no_hp"
-                                type="text"
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            />
-                            <div v-if="form.errors.no_hp" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.no_hp }}
-                            </div>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Foto Saat Ini</label>
-                            <img
-                                v-if="member.foto"
-                                :src="`/storage/${member.foto}`"
-                                alt="Foto saat ini"
-                                class="mt-2 h-32 w-32 object-cover rounded border"
-                            />
-                            <span v-else class="mt-1 block text-sm text-gray-500">Belum ada foto</span>
-                        </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">
-                                Ganti Foto (kosongkan jika tidak ingin mengganti)
-                            </label>
-                            <input
-                                type="file"
-                                accept="image/png, image/jpeg"
-                                @change="pilihFoto"
-                                class="mt-1 block w-full text-sm text-gray-700"
-                            />
-                            <div v-if="form.errors.foto" class="mt-1 text-sm text-red-600">
-                                {{ form.errors.foto }}
-                            </div>
-                            <img
-                                v-if="pratinjau"
-                                :src="pratinjau"
-                                alt="Pratinjau foto baru"
-                                class="mt-2 h-32 w-32 object-cover rounded border"
-                            />
-                        </div>
-
-                        <div class="pt-2">
-                            <button
-                                type="submit"
-                                :disabled="form.processing"
-                                class="inline-flex items-center px-4 py-2 bg-indigo-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50"
-                            >
-                                Simpan Perubahan
-                            </button>
-                        </div>
-                    </form>
+            <form @submit.prevent="submit" class="mt-3 space-y-3">
+                <div>
+                    <label class="block">Nama</label>
+                    <input v-model="form.nama" type="text" />
+                    <div v-if="form.errors.nama" class="text-red-600">
+                        {{ form.errors.nama }}
+                    </div>
                 </div>
-            </div>
+
+                <div>
+                    <label class="block">NIS/NIM</label>
+                    <input v-model="form.nis_nim" type="text" />
+
+                    <div v-if="statusNis === 'memeriksa'" class="text-gray-500">
+                        Memeriksa NIS/NIM...
+                    </div>
+                    <div v-else-if="statusNis === 'tersedia'" class="text-green-700">
+                        NIS/NIM ini tersedia.
+                    </div>
+                    <div v-else-if="statusNis === 'terpakai'" class="text-red-600">
+                        NIS/NIM ini sudah terdaftar. Gunakan nomor lain.
+                    </div>
+                    <div v-else-if="statusNis === 'gagal'" class="text-yellow-700">
+                        Pemeriksaan otomatis gagal. Anda tetap dapat menyimpan; server akan memeriksa ulang.
+                    </div>
+
+                    <div v-if="form.errors.nis_nim" class="text-red-600">
+                        {{ form.errors.nis_nim }}
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block">No. HP</label>
+                    <input v-model="form.no_hp" type="text" />
+                    <div v-if="form.errors.no_hp" class="text-red-600">
+                        {{ form.errors.no_hp }}
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block">Foto (JPG/PNG, maksimal 2 MB)</label>
+                    <input type="file" accept="image/png, image/jpeg" @change="pilihFoto" />
+                    <div v-if="form.errors.foto" class="text-red-600">
+                        {{ form.errors.foto }}
+                    </div>
+                    <img
+                        v-if="pratinjau"
+                        :src="pratinjau"
+                        alt="Pratinjau foto"
+                        class="mt-2 h-32 w-32 object-cover"
+                    />
+                </div>
+
+                <button
+                    type="submit"
+                    :disabled="form.processing || statusNis === 'terpakai'"
+                >
+                    Perbarui
+                </button>
+            </form>
         </div>
     </AuthenticatedLayout>
 </template>
